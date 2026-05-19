@@ -1,0 +1,103 @@
+/**
+ * @brief PID Tuning Parameters Reference (Ziegler-Nichols Method)
+ * 
+ * Ziegler-Nichols Parameters:
+ * Controller   Kp            Ti              Td
+ * P        0.50*Kc         -               -
+ * PD       0.65*Kc         -            0.12*Pc
+ * PI       0.45*Kc       0.85*Pc           -
+ * PID      0.65*Kc       0.50*Pc        0.12*Pc
+ * 
+ * Where:
+ * Kc = Ultimate gain (critical gain)
+ * Pc = Ultimate period (oscillation period at Kc)
+ * 
+ * Example calculation:
+ * Kc = 9.2, Pc = 225s
+ * Kp = 0.65*Kc = 5.98
+ * Td = 0.12*Pc = 27s
+ * Kd = Kp*Td/T = 5.98*27/5 = 32.392
+ * Ti = 0.5*Pc = 112.5s
+ * Ki = Kp*T/Ti = 5.98*5/112.5 = 0.265
+ */
+
+/**
+ * @brief PID Controller Calculation Function
+ * @param pid Pointer to PID controller structure
+ * @return PWM high-level time in milliseconds
+ */
+int PID_Calculate(PID_Controller *pid)
+{
+    double proportional_Impedance, integral_Impedance, derivative_Impedance;
+    
+    // Boundary condition check: prevent integral windup
+    if (pid->integral_sum < 0) {
+        pid->integral_sum = 0;
+    }
+    
+    // Case 1: Error exceeds positive threshold, output maximum PWM
+    if ((pid->setpoint - pid->actual_value) > pid->error_threshold) {
+        pid->pwm_high_time = pid->pwm_period;
+        pid->integral_sum = 0;
+        return pid->pwm_high_time;
+    }
+    
+    // Case 2: Actual value exceeds setpoint (small negative error), output minimum PWM
+    if ((pid->actual_value - pid->setpoint) > -0.001) {
+        pid->current_error = pid->setpoint - pid->actual_value;
+        pid->integral_sum += pid->current_error;
+        pid->pwm_high_time = 0;
+        return pid->pwm_high_time;
+    }
+    
+    // Case 3: Normal PID calculation
+    pid->current_error = pid->setpoint - pid->actual_value;
+    
+    // Proportional term
+    proportional_Impedance = pid->kp * pid->current_error;
+    
+    // Integral term (accumulate only when error is small to prevent windup)
+    if (pid->current_error < 1.0) {
+        pid->integral_sum += pid->current_error;
+    }
+    integral_Impedance = pid->ki * pid->integral_sum;
+    
+    // Derivative term
+    derivative_Impedance = pid->kd * (pid->current_error - pid->previous_error);
+    
+    // Calculate PWM output (convert seconds to milliseconds)
+    pid->pwm_high_time = (int)((proportional_Impedance + integral_Impedance + derivative_Impedance) * 1000);
+    
+    // Update error history
+    pid->second_previous_error = pid->previous_error;
+    pid->previous_error = pid->current_error;
+    
+    // PWM output clamping
+    if (pid->pwm_high_time > pid->pwm_period) {
+        pid->pwm_high_time = pid->pwm_period;
+    } else if (pid->pwm_high_time < 0) {
+        pid->pwm_high_time = 0;
+    }
+    
+    return pid->pwm_high_time;
+}
+
+/**
+ * @brief PID Controller Parameter Structure
+ */
+typedef struct {
+    double setpoint;           // Target setpoint value
+    double actual_value;       // Actual measured value
+    double kp;                // Proportional gain
+    double ki;                // Integral gain  
+    double kd;                // Derivative gain
+    double error_threshold;   // Error threshold for special handling
+    int pwm_period;           // PWM period in milliseconds
+    int pwm_high_time;        // PWM high-level time in milliseconds
+    
+    // Error states
+    double current_error;         // Current error
+    double previous_error;        // Previous error
+    double second_previous_error; // Second previous error
+    double integral_sum;          // Integral accumulation sum
+} PID_Controller;
